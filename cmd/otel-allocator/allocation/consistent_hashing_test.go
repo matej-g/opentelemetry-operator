@@ -21,46 +21,45 @@ import (
 )
 
 func TestCanSetSingleTarget(t *testing.T) {
-	cols := makeNCollectors(3, 0)
+	cols := MakeNCollectors(3, 0)
 	c := newConsistentHashingAllocator(logger)
 	c.SetCollectors(cols)
-	c.SetTargets(makeNNewTargets(1, 3, 0))
+	c.SetTargets(MakeNNewTargets(1, 3, 0))
 	actualTargetItems := c.TargetItems()
 	assert.Len(t, actualTargetItems, 1)
 	for _, item := range actualTargetItems {
-		assert.Equal(t, "collector-2", item.CollectorName)
+		assert.Equal(t, "collector-0", item.CollectorName)
 	}
 }
 
 func TestRelativelyEvenDistribution(t *testing.T) {
 	numCols := 15
 	numItems := 10000
-	cols := makeNCollectors(numCols, 0)
+	cols := MakeNCollectors(numCols, 0)
 	var expectedPerCollector = float64(numItems / numCols)
 	expectedDelta := (expectedPerCollector * 1.5) - expectedPerCollector
 	c := newConsistentHashingAllocator(logger)
 	c.SetCollectors(cols)
-	c.SetTargets(makeNNewTargets(numItems, 0, 0))
+	c.SetTargets(MakeNNewTargets(numItems, 0, 0))
 	actualTargetItems := c.TargetItems()
 	assert.Len(t, actualTargetItems, numItems)
 	actualCollectors := c.Collectors()
 	assert.Len(t, actualCollectors, numCols)
 	for _, col := range actualCollectors {
-		t.Logf("col: %s \ttargets: %d", col.Name, col.NumTargets)
 		assert.InDelta(t, col.NumTargets, expectedPerCollector, expectedDelta)
 	}
 }
 
 func TestFullReallocation(t *testing.T) {
-	cols := makeNCollectors(10, 0)
+	cols := MakeNCollectors(10, 0)
 	c := newConsistentHashingAllocator(logger)
 	c.SetCollectors(cols)
-	c.SetTargets(makeNNewTargets(10000, 10, 0))
+	c.SetTargets(MakeNNewTargets(10000, 10, 0))
 	actualTargetItems := c.TargetItems()
 	assert.Len(t, actualTargetItems, 10000)
 	actualCollectors := c.Collectors()
 	assert.Len(t, actualCollectors, 10)
-	newCols := makeNCollectors(10, 10)
+	newCols := MakeNCollectors(10, 10)
 	c.SetCollectors(newCols)
 	updatedTargetItems := c.TargetItems()
 	assert.Len(t, updatedTargetItems, 10000)
@@ -77,15 +76,15 @@ func TestNumRemapped(t *testing.T) {
 	numInitialCols := 15
 	numFinalCols := 16
 	expectedDelta := float64((numFinalCols - numInitialCols) * (numItems / numFinalCols))
-	cols := makeNCollectors(numInitialCols, 0)
+	cols := MakeNCollectors(numInitialCols, 0)
 	c := newConsistentHashingAllocator(logger)
 	c.SetCollectors(cols)
-	c.SetTargets(makeNNewTargets(numItems, numInitialCols, 0))
+	c.SetTargets(MakeNNewTargets(numItems, numInitialCols, 0))
 	actualTargetItems := c.TargetItems()
 	assert.Len(t, actualTargetItems, numItems)
 	actualCollectors := c.Collectors()
 	assert.Len(t, actualCollectors, numInitialCols)
-	newCols := makeNCollectors(numFinalCols, 0)
+	newCols := MakeNCollectors(numFinalCols, 0)
 	c.SetCollectors(newCols)
 	updatedTargetItems := c.TargetItems()
 	assert.Len(t, updatedTargetItems, numItems)
@@ -103,4 +102,43 @@ func TestNumRemapped(t *testing.T) {
 		}
 	}
 	assert.InDelta(t, numItems/numFinalCols, countRemapped, expectedDelta)
+}
+
+func TestTargetsWithNoCollectorsConsistentHashing(t *testing.T) {
+
+	c := newConsistentHashingAllocator(logger)
+
+	// Adding 10 new targets
+	numItems := 10
+	c.SetTargets(MakeNNewTargetsWithEmptyCollectors(numItems, 0))
+	actualTargetItems := c.TargetItems()
+	assert.Len(t, actualTargetItems, numItems)
+
+	// Adding 5 new targets, and removing the old 10 targets
+	numItemsUpdate := 5
+	c.SetTargets(MakeNNewTargetsWithEmptyCollectors(numItemsUpdate, 10))
+	actualTargetItemsUpdated := c.TargetItems()
+	assert.Len(t, actualTargetItemsUpdated, numItemsUpdate)
+
+	// Adding 5 new targets, and one existing target
+	numItemsUpdate = 6
+	c.SetTargets(MakeNNewTargetsWithEmptyCollectors(numItemsUpdate, 14))
+	actualTargetItemsUpdated = c.TargetItems()
+	assert.Len(t, actualTargetItemsUpdated, numItemsUpdate)
+
+	// Adding collectors to test allocation
+	numCols := 2
+	cols := MakeNCollectors(2, 0)
+	c.SetCollectors(cols)
+	var expectedPerCollector = float64(numItemsUpdate / numCols)
+	expectedDelta := (expectedPerCollector * 1.5) - expectedPerCollector
+	// Checking to see that there is no change to number of targets
+	actualTargetItems = c.TargetItems()
+	assert.Len(t, actualTargetItems, numItemsUpdate)
+	// Checking to see collectors are added correctly
+	actualCollectors := c.Collectors()
+	assert.Len(t, actualCollectors, numCols)
+	for _, col := range actualCollectors {
+		assert.InDelta(t, col.NumTargets, expectedPerCollector, expectedDelta)
+	}
 }

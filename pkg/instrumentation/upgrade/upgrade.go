@@ -20,21 +20,41 @@ import (
 	"reflect"
 
 	"github.com/go-logr/logr"
+	featuregate2 "go.opentelemetry.io/collector/featuregate"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/open-telemetry/opentelemetry-operator/apis/v1alpha1"
+	"github.com/open-telemetry/opentelemetry-operator/pkg/constants"
+	"github.com/open-telemetry/opentelemetry-operator/pkg/featuregate"
+)
+
+var (
+	defaultAnnotationToGate = map[string]*featuregate2.Gate{
+		constants.AnnotationDefaultAutoInstrumentationJava:        featuregate.EnableJavaAutoInstrumentationSupport,
+		constants.AnnotationDefaultAutoInstrumentationNodeJS:      featuregate.EnableNodeJSAutoInstrumentationSupport,
+		constants.AnnotationDefaultAutoInstrumentationPython:      featuregate.EnablePythonAutoInstrumentationSupport,
+		constants.AnnotationDefaultAutoInstrumentationDotNet:      featuregate.EnableDotnetAutoInstrumentationSupport,
+		constants.AnnotationDefaultAutoInstrumentationGo:          featuregate.EnableGoAutoInstrumentationSupport,
+		constants.AnnotationDefaultAutoInstrumentationApacheHttpd: featuregate.EnableApacheHTTPAutoInstrumentationSupport,
+		constants.AnnotationDefaultAutoInstrumentationNginx:       featuregate.EnableNginxAutoInstrumentationSupport,
+	}
 )
 
 type InstrumentationUpgrade struct {
-	Client                client.Client
-	Logger                logr.Logger
-	DefaultAutoInstJava   string
-	DefaultAutoInstNodeJS string
-	DefaultAutoInstPython string
-	DefaultAutoInstDotNet string
+	Client                     client.Client
+	Logger                     logr.Logger
+	Recorder                   record.EventRecorder
+	DefaultAutoInstJava        string
+	DefaultAutoInstNodeJS      string
+	DefaultAutoInstPython      string
+	DefaultAutoInstDotNet      string
+	DefaultAutoInstApacheHttpd string
+	DefaultAutoInstNginx       string
+	DefaultAutoInstGo          string
 }
 
-//+kubebuilder:rbac:groups=opentelemetry.io,resources=instrumentations,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=opentelemetry.io,resources=instrumentations,verbs=get;list;watch;update;patch
 
 // ManagedInstances upgrades managed instances by the opentelemetry-operator.
 func (u *InstrumentationUpgrade) ManagedInstances(ctx context.Context) error {
@@ -55,7 +75,7 @@ func (u *InstrumentationUpgrade) ManagedInstances(ctx context.Context) error {
 		upgraded := u.upgrade(ctx, toUpgrade)
 		if !reflect.DeepEqual(upgraded, toUpgrade) {
 			// use update instead of patch because the patch does not upgrade annotations
-			if err := u.Client.Update(ctx, &upgraded); err != nil {
+			if err := u.Client.Update(ctx, upgraded); err != nil {
 				u.Logger.Error(err, "failed to apply changes to instance", "name", upgraded.Name, "namespace", upgraded.Namespace)
 				continue
 			}
@@ -68,38 +88,54 @@ func (u *InstrumentationUpgrade) ManagedInstances(ctx context.Context) error {
 	return nil
 }
 
-func (u *InstrumentationUpgrade) upgrade(_ context.Context, inst v1alpha1.Instrumentation) v1alpha1.Instrumentation {
-	autoInstJava := inst.Annotations[v1alpha1.AnnotationDefaultAutoInstrumentationJava]
-	if autoInstJava != "" {
-		// upgrade the image only if the image matches the annotation
-		if inst.Spec.Java.Image == autoInstJava {
-			inst.Spec.Java.Image = u.DefaultAutoInstJava
-			inst.Annotations[v1alpha1.AnnotationDefaultAutoInstrumentationJava] = u.DefaultAutoInstJava
+func (u *InstrumentationUpgrade) upgrade(_ context.Context, inst v1alpha1.Instrumentation) *v1alpha1.Instrumentation {
+	upgraded := inst.DeepCopy()
+	for annotation, gate := range defaultAnnotationToGate {
+		autoInst := upgraded.Annotations[annotation]
+		if autoInst != "" {
+			if gate.IsEnabled() {
+				switch annotation {
+				case constants.AnnotationDefaultAutoInstrumentationJava:
+					if inst.Spec.Java.Image == autoInst {
+						upgraded.Spec.Java.Image = u.DefaultAutoInstJava
+						upgraded.Annotations[annotation] = u.DefaultAutoInstJava
+					}
+				case constants.AnnotationDefaultAutoInstrumentationNodeJS:
+					if inst.Spec.NodeJS.Image == autoInst {
+						upgraded.Spec.NodeJS.Image = u.DefaultAutoInstNodeJS
+						upgraded.Annotations[annotation] = u.DefaultAutoInstNodeJS
+					}
+				case constants.AnnotationDefaultAutoInstrumentationPython:
+					if inst.Spec.Python.Image == autoInst {
+						upgraded.Spec.Python.Image = u.DefaultAutoInstPython
+						upgraded.Annotations[annotation] = u.DefaultAutoInstPython
+					}
+				case constants.AnnotationDefaultAutoInstrumentationDotNet:
+					if inst.Spec.DotNet.Image == autoInst {
+						upgraded.Spec.DotNet.Image = u.DefaultAutoInstDotNet
+						upgraded.Annotations[annotation] = u.DefaultAutoInstDotNet
+					}
+				case constants.AnnotationDefaultAutoInstrumentationGo:
+					if inst.Spec.Go.Image == autoInst {
+						upgraded.Spec.Go.Image = u.DefaultAutoInstGo
+						upgraded.Annotations[annotation] = u.DefaultAutoInstGo
+					}
+				case constants.AnnotationDefaultAutoInstrumentationApacheHttpd:
+					if inst.Spec.ApacheHttpd.Image == autoInst {
+						upgraded.Spec.ApacheHttpd.Image = u.DefaultAutoInstApacheHttpd
+						upgraded.Annotations[annotation] = u.DefaultAutoInstApacheHttpd
+					}
+				case constants.AnnotationDefaultAutoInstrumentationNginx:
+					if inst.Spec.Nginx.Image == autoInst {
+						upgraded.Spec.Nginx.Image = u.DefaultAutoInstNginx
+						upgraded.Annotations[annotation] = u.DefaultAutoInstNginx
+					}
+				}
+			} else {
+				u.Logger.Error(nil, "autoinstrumentation not enabled for this language", "flag", gate.ID())
+				u.Recorder.Event(upgraded, "Warning", "InstrumentationUpgradeRejected", fmt.Sprintf("support for is not enabled for %s", gate.ID()))
+			}
 		}
 	}
-	autoInstNodeJS := inst.Annotations[v1alpha1.AnnotationDefaultAutoInstrumentationNodeJS]
-	if autoInstNodeJS != "" {
-		// upgrade the image only if the image matches the annotation
-		if inst.Spec.NodeJS.Image == autoInstNodeJS {
-			inst.Spec.NodeJS.Image = u.DefaultAutoInstNodeJS
-			inst.Annotations[v1alpha1.AnnotationDefaultAutoInstrumentationNodeJS] = u.DefaultAutoInstNodeJS
-		}
-	}
-	autoInstPython := inst.Annotations[v1alpha1.AnnotationDefaultAutoInstrumentationPython]
-	if autoInstPython != "" {
-		// upgrade the image only if the image matches the annotation
-		if inst.Spec.Python.Image == autoInstPython {
-			inst.Spec.Python.Image = u.DefaultAutoInstPython
-			inst.Annotations[v1alpha1.AnnotationDefaultAutoInstrumentationPython] = u.DefaultAutoInstPython
-		}
-	}
-	autoInstDotnet := inst.Annotations[v1alpha1.AnnotationDefaultAutoInstrumentationDotNet]
-	if autoInstDotnet != "" {
-		// upgrade the image only if the image matches the annotation
-		if inst.Spec.DotNet.Image == autoInstDotnet {
-			inst.Spec.DotNet.Image = u.DefaultAutoInstDotNet
-			inst.Annotations[v1alpha1.AnnotationDefaultAutoInstrumentationDotNet] = u.DefaultAutoInstDotNet
-		}
-	}
-	return inst
+	return upgraded
 }

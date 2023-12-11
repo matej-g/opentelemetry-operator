@@ -46,20 +46,22 @@ func TestInjectPythonSDK(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Volumes: []corev1.Volume{
 						{
-							Name: volumeName,
+							Name: pythonVolumeName,
 							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
+								EmptyDir: &corev1.EmptyDirVolumeSource{
+									SizeLimit: &defaultVolumeLimitSize,
+								},
 							},
 						},
 					},
 					InitContainers: []corev1.Container{
 						{
-							Name:    initContainerName,
+							Name:    "opentelemetry-auto-instrumentation-python",
 							Image:   "foo/bar:1",
-							Command: []string{"cp", "-a", "/autoinstrumentation/.", "/otel-auto-instrumentation/"},
+							Command: []string{"cp", "-a", "/autoinstrumentation/.", "/otel-auto-instrumentation-python"},
 							VolumeMounts: []corev1.VolumeMount{{
-								Name:      volumeName,
-								MountPath: "/otel-auto-instrumentation",
+								Name:      "opentelemetry-auto-instrumentation-python",
+								MountPath: "/otel-auto-instrumentation-python",
 							}},
 						},
 					},
@@ -67,22 +69,30 @@ func TestInjectPythonSDK(t *testing.T) {
 						{
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      volumeName,
-									MountPath: "/otel-auto-instrumentation",
+									Name:      "opentelemetry-auto-instrumentation-python",
+									MountPath: "/otel-auto-instrumentation-python",
 								},
 							},
 							Env: []corev1.EnvVar{
 								{
 									Name:  "PYTHONPATH",
-									Value: fmt.Sprintf("%s:%s", pythonPathPrefix, pythonPathSuffix),
+									Value: fmt.Sprintf("%s:%s", "/otel-auto-instrumentation-python/opentelemetry/instrumentation/auto_instrumentation", "/otel-auto-instrumentation-python"),
 								},
 								{
 									Name:  "OTEL_TRACES_EXPORTER",
-									Value: "otlp_proto_http",
+									Value: "otlp",
+								},
+								{
+									Name:  "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+									Value: "http/protobuf",
 								},
 								{
 									Name:  "OTEL_METRICS_EXPORTER",
-									Value: "none",
+									Value: "otlp",
+								},
+								{
+									Name:  "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+									Value: "http/protobuf",
 								},
 							},
 						},
@@ -93,7 +103,7 @@ func TestInjectPythonSDK(t *testing.T) {
 		},
 		{
 			name:   "PYTHONPATH defined",
-			Python: v1alpha1.Python{Image: "foo/bar:1"},
+			Python: v1alpha1.Python{Image: "foo/bar:1", Resources: testResourceRequirements},
 			pod: corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -112,43 +122,54 @@ func TestInjectPythonSDK(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Volumes: []corev1.Volume{
 						{
-							Name: volumeName,
+							Name: "opentelemetry-auto-instrumentation-python",
 							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
+								EmptyDir: &corev1.EmptyDirVolumeSource{
+									SizeLimit: &defaultVolumeLimitSize,
+								},
 							},
 						},
 					},
 					InitContainers: []corev1.Container{
 						{
-							Name:    initContainerName,
+							Name:    "opentelemetry-auto-instrumentation-python",
 							Image:   "foo/bar:1",
-							Command: []string{"cp", "-a", "/autoinstrumentation/.", "/otel-auto-instrumentation/"},
+							Command: []string{"cp", "-a", "/autoinstrumentation/.", "/otel-auto-instrumentation-python"},
 							VolumeMounts: []corev1.VolumeMount{{
-								Name:      volumeName,
-								MountPath: "/otel-auto-instrumentation",
+								Name:      "opentelemetry-auto-instrumentation-python",
+								MountPath: "/otel-auto-instrumentation-python",
 							}},
+							Resources: testResourceRequirements,
 						},
 					},
 					Containers: []corev1.Container{
 						{
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      volumeName,
-									MountPath: "/otel-auto-instrumentation",
+									Name:      "opentelemetry-auto-instrumentation-python",
+									MountPath: "/otel-auto-instrumentation-python",
 								},
 							},
 							Env: []corev1.EnvVar{
 								{
 									Name:  "PYTHONPATH",
-									Value: fmt.Sprintf("%s:%s:%s", pythonPathPrefix, "/foo:/bar", pythonPathSuffix),
+									Value: fmt.Sprintf("%s:%s:%s", "/otel-auto-instrumentation-python/opentelemetry/instrumentation/auto_instrumentation", "/foo:/bar", "/otel-auto-instrumentation-python"),
 								},
 								{
 									Name:  "OTEL_TRACES_EXPORTER",
-									Value: "otlp_proto_http",
+									Value: "otlp",
+								},
+								{
+									Name:  "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+									Value: "http/protobuf",
 								},
 								{
 									Name:  "OTEL_METRICS_EXPORTER",
-									Value: "none",
+									Value: "otlp",
+								},
+								{
+									Name:  "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+									Value: "http/protobuf",
 								},
 							},
 						},
@@ -178,20 +199,22 @@ func TestInjectPythonSDK(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Volumes: []corev1.Volume{
 						{
-							Name: volumeName,
+							Name: pythonVolumeName,
 							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
+								EmptyDir: &corev1.EmptyDirVolumeSource{
+									SizeLimit: &defaultVolumeLimitSize,
+								},
 							},
 						},
 					},
 					InitContainers: []corev1.Container{
 						{
-							Name:    initContainerName,
+							Name:    "opentelemetry-auto-instrumentation-python",
 							Image:   "foo/bar:1",
-							Command: []string{"cp", "-a", "/autoinstrumentation/.", "/otel-auto-instrumentation/"},
+							Command: []string{"cp", "-a", "/autoinstrumentation/.", "/otel-auto-instrumentation-python"},
 							VolumeMounts: []corev1.VolumeMount{{
-								Name:      volumeName,
-								MountPath: "/otel-auto-instrumentation",
+								Name:      "opentelemetry-auto-instrumentation-python",
+								MountPath: "/otel-auto-instrumentation-python",
 							}},
 						},
 					},
@@ -199,8 +222,8 @@ func TestInjectPythonSDK(t *testing.T) {
 						{
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      volumeName,
-									MountPath: "/otel-auto-instrumentation",
+									Name:      "opentelemetry-auto-instrumentation-python",
+									MountPath: "/otel-auto-instrumentation-python",
 								},
 							},
 							Env: []corev1.EnvVar{
@@ -210,11 +233,19 @@ func TestInjectPythonSDK(t *testing.T) {
 								},
 								{
 									Name:  "PYTHONPATH",
-									Value: fmt.Sprintf("%s:%s", pythonPathPrefix, pythonPathSuffix),
+									Value: fmt.Sprintf("%s:%s", "/otel-auto-instrumentation-python/opentelemetry/instrumentation/auto_instrumentation", "/otel-auto-instrumentation-python"),
+								},
+								{
+									Name:  "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+									Value: "http/protobuf",
 								},
 								{
 									Name:  "OTEL_METRICS_EXPORTER",
-									Value: "none",
+									Value: "otlp",
+								},
+								{
+									Name:  "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+									Value: "http/protobuf",
 								},
 							},
 						},
@@ -244,20 +275,22 @@ func TestInjectPythonSDK(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Volumes: []corev1.Volume{
 						{
-							Name: volumeName,
+							Name: "opentelemetry-auto-instrumentation-python",
 							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
+								EmptyDir: &corev1.EmptyDirVolumeSource{
+									SizeLimit: &defaultVolumeLimitSize,
+								},
 							},
 						},
 					},
 					InitContainers: []corev1.Container{
 						{
-							Name:    initContainerName,
+							Name:    "opentelemetry-auto-instrumentation-python",
 							Image:   "foo/bar:1",
-							Command: []string{"cp", "-a", "/autoinstrumentation/.", "/otel-auto-instrumentation/"},
+							Command: []string{"cp", "-a", "/autoinstrumentation/.", "/otel-auto-instrumentation-python"},
 							VolumeMounts: []corev1.VolumeMount{{
-								Name:      volumeName,
-								MountPath: "/otel-auto-instrumentation",
+								Name:      "opentelemetry-auto-instrumentation-python",
+								MountPath: "/otel-auto-instrumentation-python",
 							}},
 						},
 					},
@@ -265,8 +298,8 @@ func TestInjectPythonSDK(t *testing.T) {
 						{
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      volumeName,
-									MountPath: "/otel-auto-instrumentation",
+									Name:      "opentelemetry-auto-instrumentation-python",
+									MountPath: "/otel-auto-instrumentation-python",
 								},
 							},
 							Env: []corev1.EnvVar{
@@ -276,11 +309,19 @@ func TestInjectPythonSDK(t *testing.T) {
 								},
 								{
 									Name:  "PYTHONPATH",
-									Value: fmt.Sprintf("%s:%s", pythonPathPrefix, pythonPathSuffix),
+									Value: fmt.Sprintf("%s:%s", "/otel-auto-instrumentation-python/opentelemetry/instrumentation/auto_instrumentation", "/otel-auto-instrumentation-python"),
 								},
 								{
 									Name:  "OTEL_TRACES_EXPORTER",
-									Value: "otlp_proto_http",
+									Value: "otlp",
+								},
+								{
+									Name:  "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+									Value: "http/protobuf",
+								},
+								{
+									Name:  "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+									Value: "http/protobuf",
 								},
 							},
 						},

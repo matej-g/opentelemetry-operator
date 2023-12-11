@@ -2,7 +2,6 @@
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
-  creationTimestamp: null
   name: mutating-webhook-configuration
 webhooks:
 - admissionReviewVersions:
@@ -24,6 +23,26 @@ webhooks:
     - UPDATE
     resources:
     - instrumentations
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-opentelemetry-io-v1alpha1-opampbridge
+  failurePolicy: Fail
+  name: mopampbridge.kb.io
+  rules:
+  - apiGroups:
+    - opentelemetry.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - opampbridges
   sideEffects: None
 - admissionReviewVersions:
   - v1
@@ -69,7 +88,6 @@ webhooks:
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  creationTimestamp: null
   name: validating-webhook-configuration
 webhooks:
 - admissionReviewVersions:
@@ -110,6 +128,45 @@ webhooks:
     - DELETE
     resources:
     - instrumentations
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-opentelemetry-io-v1alpha1-opampbridge
+  failurePolicy: Fail
+  name: vopampbridgecreateupdate.kb.io
+  rules:
+  - apiGroups:
+    - opentelemetry.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - opampbridges
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-opentelemetry-io-v1alpha1-opampbridge
+  failurePolicy: Ignore
+  name: vopampbridgedelete.kb.io
+  rules:
+  - apiGroups:
+    - opentelemetry.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - DELETE
+    resources:
+    - opampbridges
   sideEffects: None
 - admissionReviewVersions:
   - v1

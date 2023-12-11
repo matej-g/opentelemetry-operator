@@ -15,8 +15,7 @@
 package allocation
 
 import (
-	"fmt"
-	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/buraksezer/consistent"
@@ -25,6 +24,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/diff"
+	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/target"
 )
 
 var _ Allocator = &consistentHashingAllocator{}
@@ -44,15 +44,22 @@ type consistentHashingAllocator struct {
 	consistentHasher *consistent.Consistent
 
 	// collectors is a map from a Collector's name to a Collector instance
+	// collectorKey -> collector pointer
 	collectors map[string]*Collector
 
 	// targetItems is a map from a target item's hash to the target items allocated state
-	targetItems map[string]*TargetItem
+	// targetItem hash -> target item pointer
+	targetItems map[string]*target.Item
+
+	// collectorKey -> job -> target item hash -> true
+	targetItemsPerJobPerCollector map[string]map[string]map[string]bool
 
 	log logr.Logger
+
+	filter Filter
 }
 
-func newConsistentHashingAllocator(log logr.Logger) Allocator {
+func newConsistentHashingAllocator(log logr.Logger, opts ...AllocationOption) Allocator {
 	config := consistent.Config{
 		PartitionCount:    1061,
 		ReplicationFactor: 5,
@@ -60,33 +67,55 @@ func newConsistentHashingAllocator(log logr.Logger) Allocator {
 		Hasher:            hasher{},
 	}
 	consistentHasher := consistent.New(nil, config)
-	return &consistentHashingAllocator{
-		consistentHasher: consistentHasher,
-		collectors:       make(map[string]*Collector),
-		targetItems:      make(map[string]*TargetItem),
-		log:              log,
+	chAllocator := &consistentHashingAllocator{
+		consistentHasher:              consistentHasher,
+		collectors:                    make(map[string]*Collector),
+		targetItems:                   make(map[string]*target.Item),
+		targetItemsPerJobPerCollector: make(map[string]map[string]map[string]bool),
+		log:                           log,
 	}
+	for _, opt := range opts {
+		opt(chAllocator)
+	}
+
+	return chAllocator
+}
+
+// SetFilter sets the filtering hook to use.
+func (c *consistentHashingAllocator) SetFilter(filter Filter) {
+	c.filter = filter
+}
+
+// addCollectorTargetItemMapping keeps track of which collector has which jobs and targets
+// this allows the allocator to respond without any extra allocations to http calls. The caller of this method
+// has to acquire a lock.
+func (c *consistentHashingAllocator) addCollectorTargetItemMapping(tg *target.Item) {
+	if c.targetItemsPerJobPerCollector[tg.CollectorName] == nil {
+		c.targetItemsPerJobPerCollector[tg.CollectorName] = make(map[string]map[string]bool)
+	}
+	if c.targetItemsPerJobPerCollector[tg.CollectorName][tg.JobName] == nil {
+		c.targetItemsPerJobPerCollector[tg.CollectorName][tg.JobName] = make(map[string]bool)
+	}
+	c.targetItemsPerJobPerCollector[tg.CollectorName][tg.JobName][tg.Hash()] = true
 }
 
 // addTargetToTargetItems assigns a target to the collector based on its hash and adds it to the allocator's targetItems
 // This method is called from within SetTargets and SetCollectors, which acquire the needed lock.
 // This is only called after the collectors are cleared or when a new target has been found in the tempTargetMap.
 // INVARIANT: c.collectors must have at least 1 collector set.
-func (c *consistentHashingAllocator) addTargetToTargetItems(target *TargetItem) {
+// NOTE: by not creating a new target item, there is the potential for a race condition where we modify this target
+// item while it's being encoded by the server JSON handler.
+func (c *consistentHashingAllocator) addTargetToTargetItems(tg *target.Item) {
 	// Check if this is a reassignment, if so, decrement the previous collector's NumTargets
-	if previousColName, ok := c.collectors[target.CollectorName]; ok {
+	if previousColName, ok := c.collectors[tg.CollectorName]; ok {
 		previousColName.NumTargets--
+		delete(c.targetItemsPerJobPerCollector[tg.CollectorName][tg.JobName], tg.Hash())
 		TargetsPerCollector.WithLabelValues(previousColName.String(), consistentHashingStrategyName).Set(float64(c.collectors[previousColName.String()].NumTargets))
 	}
-	colOwner := c.consistentHasher.LocateKey([]byte(target.Hash()))
-	targetItem := &TargetItem{
-		JobName:       target.JobName,
-		Link:          LinkJSON{Link: fmt.Sprintf("/jobs/%s/targets", url.QueryEscape(target.JobName))},
-		TargetURL:     target.TargetURL,
-		Label:         target.Label,
-		CollectorName: colOwner.String(),
-	}
-	c.targetItems[targetItem.Hash()] = targetItem
+	colOwner := c.consistentHasher.LocateKey([]byte(strings.Join(tg.TargetURL, "")))
+	tg.CollectorName = colOwner.String()
+	c.targetItems[tg.Hash()] = tg
+	c.addCollectorTargetItemMapping(tg)
 	c.collectors[colOwner.String()].NumTargets++
 	TargetsPerCollector.WithLabelValues(colOwner.String(), consistentHashingStrategyName).Set(float64(c.collectors[colOwner.String()].NumTargets))
 }
@@ -94,26 +123,27 @@ func (c *consistentHashingAllocator) addTargetToTargetItems(target *TargetItem) 
 // handleTargets receives the new and removed targets and reconciles the current state.
 // Any removals are removed from the allocator's targetItems and unassigned from the corresponding collector.
 // Any net-new additions are assigned to the next available collector.
-func (c *consistentHashingAllocator) handleTargets(diff diff.Changes[*TargetItem]) {
+func (c *consistentHashingAllocator) handleTargets(diff diff.Changes[*target.Item]) {
 	// Check for removals
-	for k, target := range c.targetItems {
-		// if the current target is in the removals list
+	for k, item := range c.targetItems {
+		// if the current item is in the removals list
 		if _, ok := diff.Removals()[k]; ok {
-			col := c.collectors[target.CollectorName]
+			col := c.collectors[item.CollectorName]
 			col.NumTargets--
 			delete(c.targetItems, k)
-			TargetsPerCollector.WithLabelValues(target.CollectorName, consistentHashingStrategyName).Set(float64(col.NumTargets))
+			delete(c.targetItemsPerJobPerCollector[item.CollectorName][item.JobName], item.Hash())
+			TargetsPerCollector.WithLabelValues(item.CollectorName, consistentHashingStrategyName).Set(float64(col.NumTargets))
 		}
 	}
 
 	// Check for additions
-	for k, target := range diff.Additions() {
+	for k, item := range diff.Additions() {
 		// Do nothing if the item is already there
 		if _, ok := c.targetItems[k]; ok {
 			continue
 		} else {
-			// Add target to target pool and assign a collector
-			c.addTargetToTargetItems(target)
+			// Add item to item pool and assign a collector
+			c.addTargetToTargetItems(item)
 		}
 	}
 }
@@ -125,6 +155,7 @@ func (c *consistentHashingAllocator) handleCollectors(diff diff.Changes[*Collect
 	// Clear removed collectors
 	for _, k := range diff.Removals() {
 		delete(c.collectors, k.Name)
+		delete(c.targetItemsPerJobPerCollector, k.Name)
 		c.consistentHasher.Remove(k.Name)
 		TargetsPerCollector.WithLabelValues(k.Name, consistentHashingStrategyName).Set(0)
 	}
@@ -143,15 +174,53 @@ func (c *consistentHashingAllocator) handleCollectors(diff diff.Changes[*Collect
 // SetTargets accepts a list of targets that will be used to make
 // load balancing decisions. This method should be called when there are
 // new targets discovered or existing targets are shutdown.
-func (c *consistentHashingAllocator) SetTargets(targets map[string]*TargetItem) {
+func (c *consistentHashingAllocator) SetTargets(targets map[string]*target.Item) {
 	timer := prometheus.NewTimer(TimeToAssign.WithLabelValues("SetTargets", consistentHashingStrategyName))
 	defer timer.ObserveDuration()
+
+	if c.filter != nil {
+		targets = c.filter.Apply(targets)
+	}
+	RecordTargetsKept(targets)
 
 	c.m.Lock()
 	defer c.m.Unlock()
 
 	if len(c.collectors) == 0 {
-		c.log.Info("No collector instances present, cannot set targets")
+		c.log.Info("No collector instances present, saving targets to allocate to collector(s)")
+		// If there were no targets discovered previously, assign this as the new set of target items
+		if len(c.targetItems) == 0 {
+			c.log.Info("Not discovered any targets previously, saving targets found to the targetItems set")
+			for k, item := range targets {
+				c.targetItems[k] = item
+			}
+		} else {
+			// If there were previously discovered targets, add or remove accordingly
+			targetsDiffEmptyCollectorSet := diff.Maps(c.targetItems, targets)
+
+			// Check for additions
+			if len(targetsDiffEmptyCollectorSet.Additions()) > 0 {
+				c.log.Info("New targets discovered, adding new targets to the targetItems set")
+				for k, item := range targetsDiffEmptyCollectorSet.Additions() {
+					// Do nothing if the item is already there
+					if _, ok := c.targetItems[k]; ok {
+						continue
+					} else {
+						// Add item to item pool
+						c.targetItems[k] = item
+					}
+				}
+			}
+
+			// Check for deletions
+			if len(targetsDiffEmptyCollectorSet.Removals()) > 0 {
+				c.log.Info("Targets removed, Removing targets from the targetItems set")
+				for k := range targetsDiffEmptyCollectorSet.Removals() {
+					// Delete item from target items
+					delete(c.targetItems, k)
+				}
+			}
+		}
 		return
 	}
 	// Check for target changes
@@ -165,13 +234,12 @@ func (c *consistentHashingAllocator) SetTargets(targets map[string]*TargetItem) 
 // SetCollectors sets the set of collectors with key=collectorName, value=Collector object.
 // This method is called when Collectors are added or removed.
 func (c *consistentHashingAllocator) SetCollectors(collectors map[string]*Collector) {
-	log := c.log.WithValues("component", "opentelemetry-targetallocator")
 	timer := prometheus.NewTimer(TimeToAssign.WithLabelValues("SetCollectors", consistentHashingStrategyName))
 	defer timer.ObserveDuration()
 
 	CollectorsAllocatable.WithLabelValues(consistentHashingStrategyName).Set(float64(len(collectors)))
 	if len(collectors) == 0 {
-		log.Info("No collector instances present")
+		c.log.Info("No collector instances present")
 		return
 	}
 
@@ -185,11 +253,29 @@ func (c *consistentHashingAllocator) SetCollectors(collectors map[string]*Collec
 	}
 }
 
-// TargetItems returns a shallow copy of the targetItems map.
-func (c *consistentHashingAllocator) TargetItems() map[string]*TargetItem {
+func (c *consistentHashingAllocator) GetTargetsForCollectorAndJob(collector string, job string) []*target.Item {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	targetItemsCopy := make(map[string]*TargetItem)
+	if _, ok := c.targetItemsPerJobPerCollector[collector]; !ok {
+		return []*target.Item{}
+	}
+	if _, ok := c.targetItemsPerJobPerCollector[collector][job]; !ok {
+		return []*target.Item{}
+	}
+	targetItemsCopy := make([]*target.Item, len(c.targetItemsPerJobPerCollector[collector][job]))
+	index := 0
+	for targetHash := range c.targetItemsPerJobPerCollector[collector][job] {
+		targetItemsCopy[index] = c.targetItems[targetHash]
+		index++
+	}
+	return targetItemsCopy
+}
+
+// TargetItems returns a shallow copy of the targetItems map.
+func (c *consistentHashingAllocator) TargetItems() map[string]*target.Item {
+	c.m.RLock()
+	defer c.m.RUnlock()
+	targetItemsCopy := make(map[string]*target.Item)
 	for k, v := range c.targetItems {
 		targetItemsCopy[k] = v
 	}

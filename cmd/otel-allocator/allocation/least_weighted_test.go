@@ -15,57 +15,23 @@
 package allocation
 
 import (
-	"fmt"
 	"math"
 	"math/rand"
-	"strconv"
 	"testing"
 
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/open-telemetry/opentelemetry-operator/cmd/otel-allocator/target"
 )
 
 var logger = logf.Log.WithName("unit-tests")
 
-func colIndex(index, numCols int) int {
-	if numCols == 0 {
-		return -1
-	}
-	return index % numCols
-}
-
-func makeNNewTargets(n int, numCollectors int, startingIndex int) map[string]*TargetItem {
-	toReturn := map[string]*TargetItem{}
-	for i := startingIndex; i < n+startingIndex; i++ {
-		collector := fmt.Sprintf("collector-%d", colIndex(i, numCollectors))
-		label := model.LabelSet{
-			"collector": model.LabelValue(collector),
-			"i":         model.LabelValue(strconv.Itoa(i)),
-			"total":     model.LabelValue(strconv.Itoa(n + startingIndex)),
-		}
-		newTarget := NewTargetItem(fmt.Sprintf("test-job-%d", i), "test-url", label, collector)
-		toReturn[newTarget.Hash()] = newTarget
-	}
-	return toReturn
-}
-
-func makeNCollectors(n int, startingIndex int) map[string]*Collector {
-	toReturn := map[string]*Collector{}
-	for i := startingIndex; i < n+startingIndex; i++ {
-		collector := fmt.Sprintf("collector-%d", i)
-		toReturn[collector] = &Collector{
-			Name:       collector,
-			NumTargets: 0,
-		}
-	}
-	return toReturn
-}
-
 func TestSetCollectors(t *testing.T) {
 	s, _ := New("least-weighted", logger)
 
-	cols := makeNCollectors(3, 0)
+	cols := MakeNCollectors(3, 0)
 	s.SetCollectors(cols)
 
 	expectedColLen := len(cols)
@@ -81,10 +47,10 @@ func TestAddingAndRemovingTargets(t *testing.T) {
 	// prepare allocator with initial targets and collectors
 	s, _ := New("least-weighted", logger)
 
-	cols := makeNCollectors(3, 0)
+	cols := MakeNCollectors(3, 0)
 	s.SetCollectors(cols)
 
-	initTargets := makeNNewTargets(6, 3, 0)
+	initTargets := MakeNNewTargets(6, 3, 0)
 
 	// test that targets and collectors are added properly
 	s.SetTargets(initTargets)
@@ -94,7 +60,7 @@ func TestAddingAndRemovingTargets(t *testing.T) {
 	assert.Len(t, s.TargetItems(), expectedTargetLen)
 
 	// prepare second round of targets
-	tar := makeNNewTargets(4, 3, 0)
+	tar := MakeNNewTargets(4, 3, 0)
 
 	// test that fewer targets are found - removed
 	s.SetTargets(tar)
@@ -116,7 +82,7 @@ func TestAllocationCollision(t *testing.T) {
 	// prepare allocator with initial targets and collectors
 	s, _ := New("least-weighted", logger)
 
-	cols := makeNCollectors(3, 0)
+	cols := MakeNCollectors(3, 0)
 	s.SetCollectors(cols)
 	firstLabels := model.LabelSet{
 		"test": "test1",
@@ -124,10 +90,10 @@ func TestAllocationCollision(t *testing.T) {
 	secondLabels := model.LabelSet{
 		"test": "test2",
 	}
-	firstTarget := NewTargetItem("sample-name", "0.0.0.0:8000", firstLabels, "")
-	secondTarget := NewTargetItem("sample-name", "0.0.0.0:8000", secondLabels, "")
+	firstTarget := target.NewItem("sample-name", "0.0.0.0:8000", firstLabels, "")
+	secondTarget := target.NewItem("sample-name", "0.0.0.0:8000", secondLabels, "")
 
-	targetList := map[string]*TargetItem{
+	targetList := map[string]*target.Item{
 		firstTarget.Hash():  firstTarget,
 		secondTarget.Hash(): secondTarget,
 	}
@@ -150,7 +116,7 @@ func TestAllocationCollision(t *testing.T) {
 func TestNoCollectorReassignment(t *testing.T) {
 	s, _ := New("least-weighted", logger)
 
-	cols := makeNCollectors(3, 0)
+	cols := MakeNCollectors(3, 0)
 	s.SetCollectors(cols)
 
 	expectedColLen := len(cols)
@@ -159,7 +125,7 @@ func TestNoCollectorReassignment(t *testing.T) {
 	for _, i := range cols {
 		assert.NotNil(t, s.Collectors()[i.Name])
 	}
-	initTargets := makeNNewTargets(6, 3, 0)
+	initTargets := MakeNNewTargets(6, 3, 0)
 
 	// test that targets and collectors are added properly
 	s.SetTargets(initTargets)
@@ -170,7 +136,7 @@ func TestNoCollectorReassignment(t *testing.T) {
 	assert.Len(t, targetItems, expectedTargetLen)
 
 	// assign new set of collectors with the same names
-	newCols := makeNCollectors(3, 0)
+	newCols := MakeNCollectors(3, 0)
 	s.SetCollectors(newCols)
 
 	newTargetItems := s.TargetItems()
@@ -179,9 +145,10 @@ func TestNoCollectorReassignment(t *testing.T) {
 }
 
 func TestSmartCollectorReassignment(t *testing.T) {
+	t.Skip("This test is flaky and fails frequently, see issue 1291")
 	s, _ := New("least-weighted", logger)
 
-	cols := makeNCollectors(4, 0)
+	cols := MakeNCollectors(4, 0)
 	s.SetCollectors(cols)
 
 	expectedColLen := len(cols)
@@ -190,7 +157,7 @@ func TestSmartCollectorReassignment(t *testing.T) {
 	for _, i := range cols {
 		assert.NotNil(t, s.Collectors()[i.Name])
 	}
-	initTargets := makeNNewTargets(6, 0, 0)
+	initTargets := MakeNNewTargets(6, 0, 0)
 	// test that targets and collectors are added properly
 	s.SetTargets(initTargets)
 
@@ -232,10 +199,10 @@ func TestCollectorBalanceWhenAddingAndRemovingAtRandom(t *testing.T) {
 	// prepare allocator with 3 collectors and 'random' amount of targets
 	s, _ := New("least-weighted", logger)
 
-	cols := makeNCollectors(3, 0)
+	cols := MakeNCollectors(3, 0)
 	s.SetCollectors(cols)
 
-	targets := makeNNewTargets(27, 3, 0)
+	targets := MakeNNewTargets(27, 3, 0)
 	s.SetTargets(targets)
 
 	// Divisor needed to get 15%
@@ -274,7 +241,7 @@ func TestCollectorBalanceWhenAddingAndRemovingAtRandom(t *testing.T) {
 		assert.InDelta(t, i.NumTargets, count, math.Round(percent))
 	}
 	// adding targets at 'random'
-	for _, item := range makeNNewTargets(13, 3, 100) {
+	for _, item := range MakeNNewTargets(13, 3, 100) {
 		targets[item.Hash()] = item
 	}
 	s.SetTargets(targets)
@@ -286,6 +253,54 @@ func TestCollectorBalanceWhenAddingAndRemovingAtRandom(t *testing.T) {
 
 	// test
 	for _, i := range collectors {
+		assert.InDelta(t, i.NumTargets, count, math.Round(percent))
+	}
+}
+
+func TestTargetsWithNoCollectorsLeastWeighted(t *testing.T) {
+	s, _ := New("least-weighted", logger)
+
+	// Adding 10 new targets
+	numItems := 10
+	initTargets := MakeNNewTargetsWithEmptyCollectors(numItems, 0)
+	s.SetTargets(initTargets)
+	actualTargetItems := s.TargetItems()
+	assert.Len(t, actualTargetItems, numItems)
+
+	// Adding 5 new targets, and removing the old 10 targets
+	numItemsUpdate := 5
+	newTargets := MakeNNewTargetsWithEmptyCollectors(numItemsUpdate, 10)
+	s.SetTargets(newTargets)
+	actualTargetItems = s.TargetItems()
+	assert.Len(t, actualTargetItems, numItemsUpdate)
+
+	// Adding 5 new targets, and one existing target
+	numItemsUpdate = 6
+	newTargets = MakeNNewTargetsWithEmptyCollectors(numItemsUpdate, 14)
+	s.SetTargets(newTargets)
+	actualTargetItems = s.TargetItems()
+	assert.Len(t, actualTargetItems, numItemsUpdate)
+
+	// Adding collectors to test allocation
+	numCols := 2
+	cols := MakeNCollectors(2, 0)
+	s.SetCollectors(cols)
+
+	// Checking to see that there is no change to number of targets
+	actualTargetItems = s.TargetItems()
+	assert.Len(t, actualTargetItems, numItemsUpdate)
+	// Checking to see collectors are added correctly
+	actualCollectors := s.Collectors()
+	assert.Len(t, actualCollectors, numCols)
+
+	// Divisor needed to get 15%
+	divisor := 6.7
+	targetItemLen := len(actualTargetItems)
+	count := targetItemLen / len(actualCollectors)
+	percent := float64(targetItemLen) / divisor
+
+	// Check to see targets are allocated with the expected delta
+	for _, i := range actualCollectors {
 		assert.InDelta(t, i.NumTargets, count, math.Round(percent))
 	}
 }

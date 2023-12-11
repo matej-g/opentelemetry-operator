@@ -12,6 +12,9 @@ rules:
 - apiGroups: [""]
   resources: [ "pods" ]
   verbs: [ "get", "list", "watch"]
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors"]
+  verbs: ["get", "list", "watch"]
 ---
 apiVersion: kuttl.dev/v1beta1
 kind: TestStep
@@ -41,8 +44,22 @@ spec:
     enabled: true
     image: "local/opentelemetry-operator-targetallocator:e2e"
     serviceAccount: ta
+    securityContext:
+      runAsUser: 1000
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: ingress-ready
+                  operator: In
+                  values:
+                    - "true"
     prometheusCR:
       enabled: true
+    env:
+      - name: TEST_ENV
+        value: "test"
   config: |
     receivers:
       jaeger:
@@ -53,18 +70,27 @@ spec:
       prometheus:
         config:
           scrape_configs:
-            - job_name: 'otel-collector'
-              scrape_interval: 10s
-              static_configs:
-                - targets: [ '0.0.0.0:8888' ]
+          - job_name: 'otel-collector'
+            scrape_interval: 10s
+            static_configs:
+            - targets: [ '0.0.0.0:8888' ]
+            relabel_configs:
+            - regex: __meta_kubernetes_node_label_(.+)
+              action: labelmap
+              replacement: $$1
+            - regex: test_.*
+              action: labeldrop  
+            - regex: 'metrica_*|metricb.*'
+              action: labelkeep
+              replacement: $$1
     
     processors:
 
     exporters:
-      logging:
+      debug:
     service:
       pipelines:
         traces:
           receivers: [jaeger]
           processors: []
-          exporters: [logging]
+          exporters: [debug]

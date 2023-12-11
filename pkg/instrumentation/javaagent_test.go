@@ -46,20 +46,22 @@ func TestInjectJavaagent(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Volumes: []corev1.Volume{
 						{
-							Name: volumeName,
+							Name: "opentelemetry-auto-instrumentation-java",
 							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
+								EmptyDir: &corev1.EmptyDirVolumeSource{
+									SizeLimit: &defaultVolumeLimitSize,
+								},
 							},
 						},
 					},
 					InitContainers: []corev1.Container{
 						{
-							Name:    initContainerName,
+							Name:    "opentelemetry-auto-instrumentation-java",
 							Image:   "foo/bar:1",
-							Command: []string{"cp", "/javaagent.jar", "/otel-auto-instrumentation/javaagent.jar"},
+							Command: []string{"cp", "/javaagent.jar", "/otel-auto-instrumentation-java/javaagent.jar"},
 							VolumeMounts: []corev1.VolumeMount{{
-								Name:      volumeName,
-								MountPath: "/otel-auto-instrumentation",
+								Name:      "opentelemetry-auto-instrumentation-java",
+								MountPath: "/otel-auto-instrumentation-java",
 							}},
 						},
 					},
@@ -67,8 +69,8 @@ func TestInjectJavaagent(t *testing.T) {
 						{
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      volumeName,
-									MountPath: "/otel-auto-instrumentation",
+									Name:      "opentelemetry-auto-instrumentation-java",
+									MountPath: "/otel-auto-instrumentation-java",
 								},
 							},
 							Env: []corev1.EnvVar{
@@ -85,7 +87,7 @@ func TestInjectJavaagent(t *testing.T) {
 		},
 		{
 			name: "JAVA_TOOL_OPTIONS defined",
-			Java: v1alpha1.Java{Image: "foo/bar:1"},
+			Java: v1alpha1.Java{Image: "foo/bar:1", Resources: testResourceRequirements},
 			pod: corev1.Pod{
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -104,29 +106,32 @@ func TestInjectJavaagent(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Volumes: []corev1.Volume{
 						{
-							Name: volumeName,
+							Name: "opentelemetry-auto-instrumentation-java",
 							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
+								EmptyDir: &corev1.EmptyDirVolumeSource{
+									SizeLimit: &defaultVolumeLimitSize,
+								},
 							},
 						},
 					},
 					InitContainers: []corev1.Container{
 						{
-							Name:    initContainerName,
+							Name:    "opentelemetry-auto-instrumentation-java",
 							Image:   "foo/bar:1",
-							Command: []string{"cp", "/javaagent.jar", "/otel-auto-instrumentation/javaagent.jar"},
+							Command: []string{"cp", "/javaagent.jar", "/otel-auto-instrumentation-java/javaagent.jar"},
 							VolumeMounts: []corev1.VolumeMount{{
-								Name:      volumeName,
-								MountPath: "/otel-auto-instrumentation",
+								Name:      "opentelemetry-auto-instrumentation-java",
+								MountPath: "/otel-auto-instrumentation-java",
 							}},
+							Resources: testResourceRequirements,
 						},
 					},
 					Containers: []corev1.Container{
 						{
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      volumeName,
-									MountPath: "/otel-auto-instrumentation",
+									Name:      "opentelemetry-auto-instrumentation-java",
+									MountPath: "/otel-auto-instrumentation-java",
 								},
 							},
 							Env: []corev1.EnvVar{
