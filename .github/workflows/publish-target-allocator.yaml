@@ -51,6 +51,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{raw}}
             type=ref,event=branch
+            type=sha
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
